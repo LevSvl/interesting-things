@@ -1,0 +1,8 @@
+*.hex
+*.tmp
+*.img
+_*
+*.elf
+*.o
+*.swp
+*.bin

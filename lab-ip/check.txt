@@ -1,0 +1,30 @@
+svetl@SvlLaptop:~/interesting-things/lab$ make
+x86_64-linux-gnu-gcc -Wall -g main.o ipdata.o ipfuncs.o  -o _main
+./_main
+>192.168.10.15/24
+network addr: 192.168.10.0
+ip is local: 0
+ip is broadcat: 0
+match network: 1
+
+>192.168.184.5/19
+network addr: 192.168.160.0
+ip is local: 0
+ip is broadcat: 0
+match network: 2
+
+>141.128.15.36/16
+network addr: 141.128.0.0
+ip is local: 0
+ip is broadcat: 0
+match network: 0
+
+>195.0.175.255/22
+network addr: 195.0.172.0
+ip is local: 0
+ip is broadcat: 1
+match network: 4
+
+>^Cmake: *** [makefile:13: task] Interrupt
+
+svetl@SvlLaptop:~/interesting-things/lab$ 
