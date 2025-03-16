@@ -6,3 +6,7 @@ _*
 *.o
 *.swp
 *.bin
+*.map
+*.sym
+*.asm
+*.v
