@@ -15,7 +15,7 @@ OBJDUMP = $(PREFIX)objdump
 
 export CC LD OBJCOPY OBJDUMP
 
-ROOT_DIR = ${PWD}
+ROOT_DIR = ${shell pwd}
 BUILD_DIR = ${PWD}/build
 INCLUDE += -I${PWD}/include
 

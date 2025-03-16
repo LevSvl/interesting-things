@@ -35,3 +35,6 @@ clean:
 	find $(BUILD_DIR) -type f -name '*.d' -print0 | xargs -0 -r rm
 	find $(BUILD_DIR) -type f -name '*.o' -print0 | xargs -0 -r rm
 	rm -r $(BUILD_DIR)
+
+sub_dirs:
+	${shell mkdir -p $(addprefix $(BUILD_DIR)/,$(SUB_DIRS))}
