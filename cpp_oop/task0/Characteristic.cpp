@@ -39,19 +39,13 @@ namespace ch {
     };
  
     // выполнение проверки с преимуществом с заданной сложностью;
-    bool Characteristic::advantageCheck(int hardness){
-        bool check1 = abilityCheck(hardness);
-        bool check2 = abilityCheck(hardness);
- 
-        return check1 + check2;
+    bool Characteristic::advantageCheck(int hardness){ 
+        return abilityCheck(hardness) || abilityCheck(hardness);
     };
  
     // выполнение проверки с помехой с заданной сложностью;
-    bool Characteristic::disadvantageCheck(int hardness){
-        bool check1 = abilityCheck(hardness);
-        bool check2 = abilityCheck(hardness);
- 
-        return check1 * check2;
+    bool Characteristic::disadvantageCheck(int hardness){ 
+        return abilityCheck(hardness) && abilityCheck(hardness);
     };
  
     // (+=) увеличение характеристики на заданное число.
