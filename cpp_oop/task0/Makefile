@@ -13,6 +13,9 @@ CPP_OBJECTS = Characteristic.o CharacteristicTable.o main.o
 a.out: $(CPP_OBJECTS)
 	$(CPP) $(CPP_OBJECTS) -o a.out
 
+run: a.out
+	@./a.out
+
 
 clean:
 	rm -f *.o *.out
