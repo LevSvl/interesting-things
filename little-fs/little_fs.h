@@ -43,6 +43,7 @@
 #define MAX_BLOCKS_PER_FILE NDIRECT
 
 #define inum(off)         ((off - inodeStartAddr)/sizeof(inode_t))
+#define inode_off(inum)   (inum*sizeof(inode_t))
 
 #define BLOCK_NUM(addr)   (addr/BSIZE)
 

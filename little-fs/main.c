@@ -65,17 +65,18 @@ superblock_t * sb;
 #define INMEM_BLOCKS_NUM    10
 #define INMEM_INODES_NUM    10
 
-int inmem_inodes_status[INMEM_INODES_NUM];
-inode_t inmem_inodes[INMEM_INODES_NUM];
+enum state {UNUSED, BUSY};
 
 struct inmem_block {
-    enum state {UNUSED, BUSY} state;
+    enum state state;
     char inmem_addr[BSIZE];
     uint32_t dev_block_num;
 } inmem_blocks[INMEM_BLOCKS_NUM];
 
-#define INMEM_BLOCK_ADDR(idx)   (inmem_blocks + idx*BSIZE)
-#define INMEM_BLOCK_INDEX(addr) ((addr - inmem_blocks) / BSIZE)
+struct inmem_inode {
+    enum state state;
+    inode_t inode;
+} inmem_inodes[INMEM_INODES_NUM];
 
 int opened_files_cnt = 0;
 struct file opened_files[MAX_FILES_OPENED];
@@ -203,6 +204,18 @@ int main(int argc, char const *argv[])
     }
 
     /* Test open with creation */
+    fd = fs_open("/foo", FS_O_CREATE | FS_O_RDWR);
+    if (fd < 0) {
+        err("File \"/foo\" reopen after write failed\n");
+        exit(1);
+    }
+    info("Open with creation \"/foo\" ok, fd == %d\n", fd);
+    r = fs_close(fd);
+    if (r != 0) {
+        err("Close \"/foo\" failed\n");
+        exit(1);
+    }
+    info("Close \"/foo\" ok\n");
 
     return 0;
 }
@@ -237,6 +250,74 @@ inmem_block_free(struct inmem_block *inmem_block, int is_dirty)
                             inmem_block->inmem_addr, BSIZE);
     }
     inmem_blocks->state = UNUSED;
+}
+
+inode_t * fs_low_level_inode inmem_lock_inode()
+{
+    for (int i = 0; i < INMEM_INODES_NUM; i++)
+        if (inmem_inodes[i].state == UNUSED) {
+            inmem_inodes[i].state = BUSY;
+            return &inmem_inodes[i].inode;
+        }
+    return 0;
+}
+
+void fs_low_level_inode inmem_free_inode(inode_t *ip)
+{
+    for (int i = 0; i < INMEM_INODES_NUM; i++)
+        if (&inmem_inodes[i].inode == ip)
+            inmem_inodes[i].state = BUSY;
+}
+
+int fs_low_level_storage
+fs_inode_alloc()
+{
+    struct inmem_block *inmem_block;
+    uint32_t *ibm0, *ibm;
+    uint32_t max_off = dataBitMapAddr - inodeBitMapAddr;
+    int inode_num = 0;
+
+    inmem_block = inmem_read_block(sb->ibmap_start);
+    if (inmem_block == 0)
+        return 0;
+
+    ibm0 = (uint32_t *)inmem_block->inmem_addr;
+
+    for (ibm = ibm0;
+        (uint8_t *)ibm - (uint8_t *)ibm0 < max_off;
+         ibm++)  
+        {
+            int i = 0;
+            for (i = 0; i < BITS_PER_BITMAP(uint32_t); i++) {
+                if (*ibm & (1U << i))
+                    continue;
+                *ibm |= (1U << i);
+                inmem_block_free(inmem_block, 1);
+                inode_num += i;
+                return inode_num;
+        }
+        inode_num += i;
+    }
+
+    inmem_block_free(inmem_block, 0);
+    return -1;
+}
+
+void fs_low_level_storage
+fs_inode_free(int inum)
+{
+    struct inmem_block *inmem_block;
+    uint32_t *ibm;
+
+    inmem_block = inmem_read_block(sb->ibmap_start);
+    if (inmem_block == 0)
+        return;
+
+    ibm = (uint32_t *)inmem_block->inmem_addr + \
+        (inum / BITS_PER_BITMAP(uint32_t));
+
+    *ibm &= ~(1U << (inum % BITS_PER_BITMAP(uint32_t)));
+    inmem_block_free(inmem_block, 1);
 }
 
 uint32_t fs_low_level_storage
@@ -291,23 +372,6 @@ fs_block_free(uint32_t dev_block_addr)
     inmem_block_free(inmem_block, 1);
 }
 
-inode_t * fs_low_level_inode fs_lock_inode()
-{
-    for (int i = 0; i < INMEM_INODES_NUM; i++)
-        if (inmem_inodes_status[i] == UNUSED) {
-            inmem_inodes_status[i] = BUSY;
-            return &inmem_inodes[i];
-        }
-    return 0;
-}
-
-void fs_low_level_inode fs_free_inode(inode_t * ip)
-{
-    for (int i = 0; i < INMEM_INODES_NUM; i++)
-        if (&inmem_inodes[i] == ip)
-            inmem_inodes_status[i] = UNUSED;
-}
-
 char * fs_strtok_by_sep(char * path, char * name)
 {
     char *name_curr = name;
@@ -332,7 +396,7 @@ inode_t * fs_low_level_storage fs_low_level_inode
 fs_get_inode_by_inum(int inum)
 {
     struct inmem_block *inmem_block;
-    inode_t *ip0 = fs_lock_inode(), *ip1;
+    inode_t *ip0 = inmem_lock_inode(), *ip1;
     char *inode_block;
 
     if (inum >= MAXFILES)
@@ -350,6 +414,30 @@ fs_get_inode_by_inum(int inum)
     inmem_block_free(inmem_block, 0);
 
     return ip0;
+}
+
+int fs_low_level_storage
+fs_store_inode_by_inum(inode_t *ip, int inum)
+{
+    struct inmem_block *inmem_block;
+    inode_t *on_dev_ip;
+    char *inode_block;
+
+    if (inum >= MAXFILES)
+        return -1;
+    
+    inmem_block = inmem_read_block((inodeStartAddr / BSIZE + blk(inum)));
+    if (inmem_block == 0)
+        return -1;
+    
+    inode_block = inmem_block->inmem_addr;
+
+    on_dev_ip = (inode_t *)(inode_block + inode_off(inum));
+    *on_dev_ip = *ip;
+
+    inmem_block_free(inmem_block, 1);
+
+    return 0;
 }
 
 inode_t * fs_low_level_storage fs_find_inode_in_dir(inode_t *ip_parent, char *fname)
@@ -393,6 +481,54 @@ inode_t * fs_low_level_storage fs_find_inode_in_dir(inode_t *ip_parent, char *fn
     return 0;
 }
 
+int fs_low_level_storage
+fs_add_inode_in_dir(inode_t *ip_parent, char *fname, int inum_child)
+{
+    struct inmem_block *inmem_block;
+
+    if (ip_parent->type != TYPE_DIR)
+        return 1;
+    
+    for (int i = 0; i < NDIRECT; i++) {
+        char *current_block;
+        dirent_t * curr_dirent;
+        uint32_t curr_blk_num;
+
+        if (ip_parent->addr[i] == 0)
+            continue;
+
+        curr_blk_num = BLOCK_NUM(ip_parent->addr[i]);
+
+        inmem_block = inmem_read_block(curr_blk_num);
+        if (inmem_block == 0)
+            return 1;
+
+        current_block = inmem_block->inmem_addr;
+
+        curr_dirent = (dirent_t *)current_block;
+
+        while ((uintptr_t)curr_dirent - (uintptr_t)current_block < BSIZE) {
+            if (curr_dirent->strlen == 0) {
+                /* Found free dirent, place here */
+                curr_dirent->inum = inum_child;
+                curr_dirent->strlen = strlen(fname);
+                curr_dirent->reclen = sizeof(dirent_t);
+
+                memcpy(curr_dirent->name, fname, strlen(fname));
+                curr_dirent->name[strlen(fname)] = 0;
+
+                inmem_block_free(inmem_block, 1);
+                return 0;
+            }
+            curr_dirent++;
+        }
+
+        inmem_block_free(inmem_block, 0);
+    }
+
+    return 1;
+}
+
 inode_t * fs_low_level_inode fs_get_inode(char *path)
 {
     char current_name[MAXFNAME];
@@ -419,7 +555,65 @@ inode_t * fs_low_level_inode fs_get_inode(char *path)
      * we need to free inmem inode that was 
      * locked by fs_get_inode_by_inum
      */
-    fs_free_inode(ip_parent);
+    inmem_free_inode(ip_parent);
+
+    return ip_child;
+}
+
+inode_t *fs_create_inode(char *path, int type)
+{
+    char current_name[MAXFNAME];
+    int inum_child;
+    inode_t *ip_parent, *ip_child;
+
+    if (*path == '/') {
+        ip_parent = fs_get_inode_by_inum(ROOTINO);
+        path++;
+    } else if (*path == 0) {
+        return (inode_t *)0;
+    } else {
+        ip_parent = current_dir;
+    }
+
+    /* Allocate inode on storage device first */
+    inum_child = fs_inode_alloc();
+    if (inum_child < 0)
+        return (inode_t *)0;
+
+    /* Create inmemory inode */
+    ip_child = inmem_lock_inode();
+    if (ip_child == 0) {
+        fs_inode_free(inum_child);
+        inmem_free_inode(ip_child);
+        inmem_free_inode(ip_parent);
+        return (inode_t *)0;
+    }
+    ip_child->size = 0;
+    ip_child->type = type;
+    ip_child->nlink = 1;
+
+    while ((path = fs_strtok_by_sep(path, current_name)) != 0) {
+        printf("%s\n", path);
+        // ip = fs_find_inode_in_dir(ip, current_name);
+    }
+
+    /* Place inode in parent's dirent */
+    if (fs_add_inode_in_dir(ip_parent, current_name, inum_child)) {
+        fs_inode_free(inum_child);
+        inmem_free_inode(ip_child);
+        inmem_free_inode(ip_parent);
+        return (inode_t *)0;
+    }
+
+    /* Finally place inode store new inode on storage device */
+    fs_store_inode_by_inum(ip_child, inum_child);
+
+    /* 
+     * Since ip_parent won't be used anymore, 
+     * we need to free inmem inode that was 
+     * locked by fs_get_inode_by_inum
+     */
+    inmem_free_inode(ip_parent);
 
     return ip_child;
 }
@@ -448,7 +642,9 @@ int fs_open(char *path, int flags)
 
 
     if (flags & FS_O_CREATE) {
-
+        ip = fs_create_inode(path, TYPE_FILE);
+        if (ip == 0)
+            return -1;
     } else {
         ip = fs_get_inode(path);
         if (ip == 0)
@@ -483,7 +679,7 @@ int fs_low_level_inode fs_close(int fd)
         return -1;
 
     f = &opened_files[fd];
-    fs_free_inode(f->ip);
+    inmem_free_inode(f->ip);
     memset(f, 0, sizeof (struct file));
     opened_files_cnt -= 1;
 
@@ -632,7 +828,7 @@ int fs_init()
         inmem_blocks[i].state = UNUSED;
     }
     for (int i = 0; i < INMEM_INODES_NUM; i++) {
-        inmem_inodes_status[i] = UNUSED;
+        inmem_inodes[i].state = UNUSED;
     }
 }
 
