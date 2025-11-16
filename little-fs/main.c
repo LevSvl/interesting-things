@@ -134,7 +134,7 @@ int main(int argc, char const *argv[])
     }
 
     /* Test write */
-    fd = fs_open("/Makefile", FS_O_RDONLY);
+    fd = fs_open("/Makefile", FS_O_RDWR);
     if (fd < 0) {
         err("File \"/Makefile\" open failed\n");
         exit(1);
@@ -508,8 +508,10 @@ int fs_write(int fd, void *buf, uint32_t size)
         return -1;
     }
 
-
     f = &opened_files[fd];
+
+    if (!f->writable)
+        return -1;
 
     if (f->type == FD_INODE) {
         bytes_written = fs_write_to_inode(f->ip, f->off, 
