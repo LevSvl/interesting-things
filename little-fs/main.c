@@ -128,7 +128,7 @@ int main(int argc, char const *argv[])
         exit(1);
     }
     n = fs_read(fd, tmp_buf, 1000);
-    if (n != 0) {
+    if (n != -1) {
         err("Can read \"/Makefile\" after close, read %d bytes\n", n);
         exit(1);
     }
@@ -578,6 +578,10 @@ int fs_read(int fd, void *buf, uint32_t size)
     }
 
     f = &opened_files[fd];
+
+    if (!f->readable) {
+        return -1;
+    }
     
     if (f->type == FD_INODE) {
         bytes_read = fs_read_from_inode(f->ip, f->off, 
