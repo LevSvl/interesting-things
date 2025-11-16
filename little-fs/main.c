@@ -182,6 +182,26 @@ int main(int argc, char const *argv[])
     }
 
     /* Test open with trunc */
+    fd = fs_open("/Makefile", FS_O_TRUNC);
+    if (fd < 0) {
+        err("File \"/Makefile\" reopen after write failed\n");
+        exit(1);
+    }
+    info("Reopen after write \"/Makefile\" ok, fd == %d\n", fd);
+
+    n = fs_read(fd, tmp_buf, 1000);
+    if (n > 0) {
+        err("Read after write \"/Makefile\" failed,"
+            "read %d bytes\n", n);
+        exit(1);
+    }
+    info("Read from truncated \"/Makefile\" ok, fd == %d, n = %d, \n", fd, n);
+    r = fs_close(fd);
+    if (r != 0) {
+        err("Close after testing write to \"/Makefile\" failed\n");
+        exit(1);
+    }
+
     /* Test open with creation */
 
     return 0;
@@ -193,7 +213,7 @@ int main(int argc, char const *argv[])
 /* ======================================================================== */
 
 struct inmem_block * fs_low_level_storage
-fs_read_block(uint32_t block_num)
+inmem_read_block(uint32_t block_num)
 {
     for (int i = 0; i < INMEM_BLOCKS_NUM; i++) {
         if (inmem_blocks[i].state == UNUSED) {
@@ -210,13 +230,65 @@ fs_read_block(uint32_t block_num)
 }
 
 void fs_low_level_storage
-fs_block_free(struct inmem_block *inmem_block, int is_dirty)
+inmem_block_free(struct inmem_block *inmem_block, int is_dirty)
 {
     if (is_dirty) {
         memcpy((char *)IMG(fs_base,inmem_block->dev_block_num*BSIZE),
                             inmem_block->inmem_addr, BSIZE);
     }
     inmem_blocks->state = UNUSED;
+}
+
+uint32_t fs_low_level_storage
+fs_block_alloc()
+{
+    struct inmem_block *inmem_block;
+    uint32_t *dbm0, *dbm;
+    uint32_t max_off = inodeStartAddr - dataBitMapAddr;
+    int data_block_num = 0;
+
+    inmem_block = inmem_read_block(sb->dbmap_start);
+    if (inmem_block == 0)
+        return 0;
+
+    dbm0 = (uint32_t *)inmem_block->inmem_addr;
+
+    for (dbm = dbm0;
+        (uint8_t *)dbm - (uint8_t *)dbm0 < max_off;
+         dbm++)  
+        {
+            int i = 0;
+            for (i = 0; i < BITS_PER_BITMAP(uint32_t); i++) {
+                if (*dbm & (1U << i))
+                    continue;
+                *dbm |= (1U << i);
+                inmem_block_free(inmem_block, 1);
+                return dataStartAddr + data_block_num + i*BSIZE;
+        }
+        data_block_num += i;
+    }
+
+    inmem_block_free(inmem_block, 0);
+    return 0;
+}
+
+void fs_low_level_storage
+fs_block_free(uint32_t dev_block_addr)
+{
+    struct inmem_block *inmem_block;
+    uint32_t *dbm;
+    int data_block_num;
+
+    inmem_block = inmem_read_block(sb->dbmap_start);
+    if (inmem_block == 0)
+        return;
+    
+    data_block_num = BLOCK_NUM(dev_block_addr - dataStartAddr);
+    dbm = (uint32_t *)inmem_block->inmem_addr + \
+        (data_block_num / BITS_PER_BITMAP(uint32_t));
+
+    *dbm &= ~(1U << (data_block_num % BITS_PER_BITMAP(uint32_t)));
+    inmem_block_free(inmem_block, 1);
 }
 
 inode_t * fs_low_level_inode fs_lock_inode()
@@ -266,7 +338,7 @@ fs_get_inode_by_inum(int inum)
     if (inum >= MAXFILES)
         return 0;
     
-    inmem_block = fs_read_block((inodeStartAddr / BSIZE + blk(inum)));
+    inmem_block = inmem_read_block((inodeStartAddr / BSIZE + blk(inum)));
     if (inmem_block == 0)
         return 0;
     
@@ -275,7 +347,7 @@ fs_get_inode_by_inum(int inum)
     ip1 = (inode_t *)(inode_block + ((inum*sizeof(inode_t)) % BSIZE));
     *ip0 = *ip1;
 
-    fs_block_free(inmem_block, 0);
+    inmem_block_free(inmem_block, 0);
 
     return ip0;
 }
@@ -298,7 +370,7 @@ inode_t * fs_low_level_storage fs_find_inode_in_dir(inode_t *ip_parent, char *fn
 
         curr_blk_num = BLOCK_NUM(ip_parent->addr[i]);
 
-        inmem_block = fs_read_block(curr_blk_num);
+        inmem_block = inmem_read_block(curr_blk_num);
         if (inmem_block == 0)
             return 0;
 
@@ -309,13 +381,13 @@ inode_t * fs_low_level_storage fs_find_inode_in_dir(inode_t *ip_parent, char *fn
         while ((uintptr_t)current_block - (uintptr_t)curr_dirent < BSIZE) {
             if (strcmp(curr_dirent->name, fname) == 0) {
                 ip_child = fs_get_inode_by_inum(curr_dirent->inum);
-                fs_block_free(inmem_block, 0);
+                inmem_block_free(inmem_block, 0);
                 return ip_child;
             }
             curr_dirent++;
         }
 
-        fs_block_free(inmem_block, 0);
+        inmem_block_free(inmem_block, 0);
     }
 
     return 0;
@@ -352,6 +424,18 @@ inode_t * fs_low_level_inode fs_get_inode(char *path)
     return ip_child;
 }
 
+int fs_trunc_inode(inode_t *ip)
+{
+    for (int i = 0; i < NDIRECT; i++) {
+        if (ip->addr[i] == 0)
+            continue;
+        fs_block_free(ip->addr[i]);
+        ip->addr[i] = 0;
+        ip->size = 0;
+    }
+    return 0;
+}
+
 int fs_open(char *path, int flags)
 {
     int fd;
@@ -372,6 +456,11 @@ int fs_open(char *path, int flags)
 
         if (ip->type == TYPE_DIR && flags != FS_O_RDONLY)
             return -1;
+
+        if (flags & FS_O_TRUNC) {
+            if (fs_trunc_inode(ip))
+                return -1;
+        }
     }
 
     fd = opened_files_cnt++;
@@ -424,14 +513,14 @@ int fs_low_level_storage fs_read_from_inode(inode_t *ip, uint32_t off,
             break;
         }
 
-        inmem_block = fs_read_block(BLOCK_NUM(ip->addr[current_block_num]));
+        inmem_block = inmem_read_block(BLOCK_NUM(ip->addr[current_block_num]));
         if (inmem_block == 0)
             return 0;
 
         current_block = inmem_block->inmem_addr;
 
         memcpy(buf,(char *)(current_block + in_block_off), req_to_read_here);
-        fs_block_free(inmem_block, 0);
+        inmem_block_free(inmem_block, 0);
 
         bytes_read += req_to_read_here;
         off += req_to_read_here;
@@ -463,14 +552,14 @@ int fs_low_level_storage fs_write_to_inode(inode_t *ip, uint32_t off,
             break;
         }
 
-        inmem_block = fs_read_block(BLOCK_NUM(ip->addr[current_block_num]));
+        inmem_block = inmem_read_block(BLOCK_NUM(ip->addr[current_block_num]));
         if (inmem_block == 0)
             return 0;
 
         current_block = inmem_block->inmem_addr;
 
         memcpy((char *)(current_block + in_block_off), buf, req_to_write_here);
-        fs_block_free(inmem_block, 1);
+        inmem_block_free(inmem_block, 1);
 
         bytes_written += req_to_write_here;
         off += req_to_write_here;

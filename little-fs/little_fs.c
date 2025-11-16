@@ -62,7 +62,8 @@ void superblock_create()
 {
     sb.total_blocks_num = FS_TOTAL_SIZE;
     sb.magic = FS_MAGIC;
-    sb.bmap_start = inodeBitMapAddr;
+    sb.dbmap_start = dataBitMapAddr / BSIZE;
+    sb.ibmap_start = inodeBitMapAddr / BSIZE;
     sb.iblocks_start = inodeStartAddr / BSIZE;
     sb.iblocks_num = (dataStartAddr - inodeStartAddr) / BSIZE;
     sb.dblocks_num = (FS_TOTAL_SIZE*BSIZE - dataStartAddr) / BSIZE;
@@ -166,9 +167,10 @@ void print_litle_fs_config()
     printf("Total size: %d blocks   \n", sb.total_blocks_num);
     printf("Data: %d blocks         \n", sb.dblocks_num);
     printf("Data start block: %d    \n", dataStartAddr);
+    printf("Data bitmap start block: %d  \n", sb.dbmap_start);
     printf("Inodes: %d blocks       \n", sb.iblocks_num);
     printf("Inodes start block: %d  \n", sb.iblocks_start);
-    printf("Bitmap start block: %d  \n", sb.bmap_start);
+    printf("Inodes bitmap start block: %d  \n", sb.ibmap_start);
     printf("Magic: 0x%8x            \n", sb.magic);
 }
 

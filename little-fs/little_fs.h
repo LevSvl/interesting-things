@@ -56,7 +56,8 @@ typedef struct superblock {
   uint32_t dblocks_num;         // Number of data blocks
   uint32_t iblocks_num;         // Number of inodes.
   uint32_t iblocks_start;       // Block number of first inode block
-  uint32_t bmap_start;          // Block number of first free map block
+  uint32_t dbmap_start;         // Block number of first data map block
+  uint32_t ibmap_start;         // Block number of first inode map block
 } superblock_t;
 
 enum {
